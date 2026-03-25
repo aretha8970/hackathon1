@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tree Detector</title>
+    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../static/css/style.css">
+</head>
+<body>
+
+<header>
+  <div class="logo-icon">🌲</div>
+  <div>
+    <div class="logo-text">Tree Detector</div>
+    <div class="logo-sub">By Aretha Aurora A.</div>
+  </div>
+</header>
+
+<main>
+  <h1>Detect <span>Tree</span><br>From Picture</h1>
+  <p class="subtitle">Upload an aerial or ground-level photo and let the model do all the counting and detecting!</p>
+
+  <!-- Upload -->
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp" />
+    <span class="upload-icon">📁</span>
+    <div class="upload-label">click, drag, or drop picture here</div>
+    <div class="upload-hint">JPG, PNG, WebP · Max 10 MB</div>
+  </div>
+
+  <div id="preview-wrap">
+    <img id="previewImg" src="" alt="Preview" />
+    <div class="preview-bar">
+      <span id="fileName">—</span>
+      <span id="fileSize">—</span>
+    </div>
+  </div>
+
+  <button class="btn" id="detectBtn" disabled onclick="runDetection()">
+    🔍 Detect Tree
+  </button>
+
+  <div class="loader" id="loader">
+    <div class="spinner"></div>
+    <span>Detecting...</span>
+  </div>
+
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <div class="result-header">Results</div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-number" id="totalTrees">0</div>
+        <div class="stat-label">Total Trees</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="totalClasses">0</div>
+        <div class="stat-label">Types of Trees</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-number" id="topConf">—</div>
+        <div class="stat-label">Conf.</div>
+      </div>
+    </div>
+
+    <div class="label-list" id="labelList">
+      <h3>Total of trees from each type</h3>
+      <div id="labelRows"></div>
+    </div>
+
+    <div class="annotated-wrap">
+      <div class="annotated-header">
+        <span>annotated imageannotated image</span>
+        <a id="downloadLink" class="download-btn" download="hasil_deteksi.jpg">⬇ Download</a>
+      </div>
+      <img id="annotatedImg" src="" alt="Hasil deteksi" />
+    </div>
+  </div>
+</main>
+
+<script>
+  const API_URL    = "http://localhost:5000/api/detect";
+  const fileInput  = document.getElementById("fileInput");
+  const uploadZone = document.getElementById("uploadZone");
+  const detectBtn  = document.getElementById("detectBtn");
+  const loader     = document.getElementById("loader");
+  const errorBox   = document.getElementById("errorBox");
+  const results    = document.getElementById("results");
+
+  let selectedFile = null;
+
+  // ── File input handler
+  fileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) handleFile(file);
+  });
+
+  // ── Drag & drop ─
+  uploadZone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    uploadZone.classList.add("drag-over");
+  });
+  uploadZone.addEventListener("dragleave", () => uploadZone.classList.remove("drag-over"));
+  uploadZone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    uploadZone.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  function handleFile(file) {
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      showError("Format file tidak didukung. Gunakan JPG, PNG, atau WebP.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      showError("Ukuran file terlalu besar. Maksimal 10 MB.");
+      return;
+    }
+
+    selectedFile = file;
+    hideError();
+    results.style.display = "none";
+
+    // Preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      document.getElementById("previewImg").src = e.target.result;
+      document.getElementById("preview-wrap").style.display = "block";
+      document.getElementById("fileName").textContent = file.name;
+      document.getElementById("fileSize").textContent = (file.size / 1024).toFixed(1) + " KB";
+    };
+    reader.readAsDataURL(file);
+    detectBtn.disabled = false;
+  }
+
+  // ── Run detection ─
+  async function runDetection() {
+    if (!selectedFile) return;
+
+    detectBtn.disabled    = true;
+    loader.style.display  = "flex";
+    results.style.display = "none";
+    hideError();
+
+    const formData = new FormData();
+    formData.append("image", selectedFile);
+
+    try {
+      const res  = await fetch(API_URL, { method: "POST", body: formData });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Deteksi gagal.");
+      }
+
+      renderResults(data);
+    } catch (err) {
+      showError(err.message || "Terjadi kesalahan. Pastikan server Flask berjalan.");
+    } finally {
+      detectBtn.disabled   = false;
+      loader.style.display = "none";
+    }
+  }
+
+  // ── Render results ─
+  function renderResults(data) {
+    // Stats
+    document.getElementById("totalTrees").textContent   = data.total_trees;
+    document.getElementById("totalClasses").textContent = Object.keys(data.label_count).length;
+
+    const bestConf = data.detections.length
+      ? Math.max(...data.detections.map(d => d.confidence)).toFixed(1) + "%"
+      : "—";
+    document.getElementById("topConf").textContent = bestConf;
+
+    // Label breakdown
+    const labelRows = document.getElementById("labelRows");
+    labelRows.innerHTML = "";
+    const sorted = Object.entries(data.label_count).sort((a, b) => b[1] - a[1]);
+
+    if (sorted.length === 0) {
+      labelRows.innerHTML = '<div class="empty-state">Tidak ada pohon terdeteksi.</div>';
+    } else {
+      sorted.forEach(([label, count]) => {
+        labelRows.innerHTML += `
+          <div class="label-row">
+            <span class="label-name">${label}</span>
+            <span class="label-badge">${count}x</span>
+          </div>`;
+      });
+    }
+
+    // Annotated image
+    const imgSrc = "data:image/jpeg;base64," + data.annotated_image;
+    document.getElementById("annotatedImg").src = imgSrc;
+    document.getElementById("downloadLink").href = imgSrc;
+
+    results.style.display = "block";
+    results.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function showError(msg) {
+    errorBox.textContent    = "❌ " + msg;
+    errorBox.style.display  = "block";
+  }
+
+  function hideError() {
+    errorBox.style.display = "none";
+  }
+</script>
+</body>
+</html>
